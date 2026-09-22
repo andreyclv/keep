@@ -83,7 +83,7 @@ actions:
       with:
         enrich_alert:
           - {key: os_errors_15m, value: "{{ steps.logs.results.total_errors }}", disposable: true}
-          - {key: os_top_error, value: "{{ steps.logs.results.top_messages.0.message }}", disposable: true}
+          - {key: os_top_error, value: "{{ steps.logs.results.top_error }}", disposable: true}
           - {key: os_link, value: "{{ steps.logs.results.dashboards_url }}"}
 ```
 
@@ -96,6 +96,7 @@ Result shape:
   "by_family": [{"family": "app-logs", "patterns": ["inf-app-*"], "docs": 32003, "errors": 101, "warnings": 5845, "indices": ["inf-app-2026-09-22"]}],
   "by_index": [{"index": "inf-app-2026-09-22", "family": "app-logs", "docs": 32003}],
   "top_messages": [{"message": "Timeout calling X", "count": 90, "family": "app-logs"}],
+  "top_error": "Timeout calling X",
   "samples": [{"timestamp": "...", "index": "...", "family": "app-logs", "message": "...", "is_error": true, "extra": {"method": "Cmd_A"}}],
   "families_searched": ["app-logs", "iis"],
   "dashboards_url": "https://logs.example.com/_dashboards/app/data-explorer/discover#?..."

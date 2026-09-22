@@ -175,6 +175,7 @@ def test_query_hostname_normalizes_across_families():
     assert result["families_searched"] == ["app-logs", "iis", "windows-events", "pipeline-dropped"]
     assert [f["family"] for f in result["by_family"] if f.get("error")] == ["windows-events"]
     assert result["top_messages"][0] == {"message": "Timeout calling X", "count": 90, "family": "app-logs"}
+    assert result["top_error"] == "Timeout calling X"
     assert result["samples"][0]["index"] == "il2-iis-2026-09-22"
     assert result["samples"][0]["extra"] == {"csStatus": "500", "timeTaken": "10"}
     assert result["samples"][1]["message"] == "Timeout calling X"
@@ -189,6 +190,7 @@ def test_query_domain_only_hits_families_that_know_domains():
     assert lines[0]["index"] == ["il2-iis-*"]
     assert result["families_searched"] == ["iis"]
     assert result["total_errors"] == 1
+    assert result["top_error"] == ""
 
 
 def test_query_rejects_bad_input():

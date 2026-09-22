@@ -451,6 +451,7 @@ class OpensearchProvider(BaseProvider):
             "by_family": [],
             "by_index": [],
             "top_messages": [],
+            "top_error": "",
             "samples": [],
             "families_searched": [],
             "note": note,
@@ -468,11 +469,11 @@ class OpensearchProvider(BaseProvider):
                 family["error"] = str(resp["error"].get("reason") or resp["error"])[:200]
                 result["by_family"].append(family)
                 continue
-            total = resp.get("hits", {}).get("total", {})
-            family["docs"] = total.get("value", 0) if isinstance(total, dict) else int(total or 0)
             aggs = resp.get("aggregations") or {}
+            # hits.total is post-filtered to errors; the by_index aggregation counts every matching document
             for b in aggs.get("by_index", {}).get("buckets", []):
                 family["indices"].append(b["key"])
+                family["docs"] += b["doc_count"]
                 result["by_index"].append({"index": b["key"], "family": fam["name"], "docs": b["doc_count"]})
             has_error_concept = "errors" in aggs
             if has_error_concept:
@@ -500,6 +501,8 @@ class OpensearchProvider(BaseProvider):
             result["by_family"].append(family)
         result["top_messages"].sort(key=lambda m: -m["count"])
         result["top_messages"] = result["top_messages"][:10]
+        # template-safe scalar: "" when there are no errors
+        result["top_error"] = result["top_messages"][0]["message"] if result["top_messages"] else ""
         result["samples"].sort(key=lambda s: str(s.get("timestamp") or ""), reverse=True)
         result["samples"] = result["samples"][:size]
         result["dashboards_url"] = self._dashboards_link(entity_type, entity, lookback)
