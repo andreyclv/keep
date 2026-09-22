@@ -33,12 +33,12 @@ def _api_problem(**overrides):
 
 def test_api_closed_problem_is_resolved():
     alert = DynatraceProvider._format_alert(_api_problem())
-    assert alert.status == AlertStatus.RESOLVED
+    assert alert.status == AlertStatus.RESOLVED.value
 
 
 def test_api_open_problem_is_firing():
     alert = DynatraceProvider._format_alert(_api_problem(status="OPEN"))
-    assert alert.status == AlertStatus.FIRING
+    assert alert.status == AlertStatus.FIRING.value
 
 
 def test_api_problem_name_is_title_and_display_id_is_kept():
@@ -80,7 +80,7 @@ def test_api_problem_url_is_built_from_environment_id():
 )
 def test_api_severity_mapping(severity_level, expected):
     alert = DynatraceProvider._format_alert(_api_problem(severityLevel=severity_level))
-    assert alert.severity == expected
+    assert alert.severity == expected.value
 
 
 def test_webhook_payload_still_maps():
@@ -96,8 +96,8 @@ def test_webhook_payload_still_maps():
         "Tags": "",
     }
     alert = DynatraceProvider._format_alert(event)
-    assert alert.status == AlertStatus.RESOLVED
-    assert alert.severity == AlertSeverity.WARNING
+    assert alert.status == AlertStatus.RESOLVED.value
+    assert alert.severity == AlertSeverity.WARNING.value
     assert alert.name == "High Memory"
     assert alert.service == "INFVPLAWS02"
     assert alert.description == "P-2609315: High Memory | Impacted: INFVPLAWS02 | Impact: INFRASTRUCTURE"
