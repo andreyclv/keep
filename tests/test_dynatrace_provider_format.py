@@ -21,7 +21,11 @@ def _api_problem(**overrides):
         "startTime": 1758550140000,
         "endTime": 1758551520000,
         "entityTags": [],
-        "impactedEntities": [],
+        "impactedEntities": [{"entityId": {"id": "HOST-1", "type": "HOST"}, "name": "INFVPLAWS02"}],
+        "affectedEntities": [{"entityId": {"id": "HOST-1", "type": "HOST"}, "name": "INFVPLAWS02"}],
+        "rootCauseEntity": {"entityId": {"id": "PROCESS_GROUP-1", "type": "PROCESS_GROUP"}, "name": "Windows System"},
+        "managementZones": [{"id": "1", "name": "Prod"}],
+        "problemFilters": [{"id": "x", "name": "NOC"}],
     }
     problem.update(overrides)
     return problem
@@ -41,7 +45,25 @@ def test_api_problem_name_is_title_and_display_id_is_kept():
     alert = DynatraceProvider._format_alert(_api_problem())
     assert alert.name == "High Memory"
     assert alert.display_id == "P-2609315"
-    assert "P-2609315" in alert.description
+    assert alert.description == "P-2609315: High Memory | Affected: INFVPLAWS02 | Root cause: Windows System | Impact: INFRASTRUCTURE"
+
+
+def test_api_problem_entities_are_flattened():
+    alert = DynatraceProvider._format_alert(_api_problem())
+    assert alert.service == "INFVPLAWS02"
+    assert alert.affected_entity_names == "INFVPLAWS02"
+    assert alert.root_cause == "Windows System"
+    assert alert.management_zone_names == "Prod"
+    assert alert.alerting_profiles == "NOC"
+
+
+def test_api_problem_url_is_built_from_environment_id():
+    from types import SimpleNamespace
+
+    provider = SimpleNamespace(authentication_config=SimpleNamespace(environment_id="ysa24221"))
+    alert = DynatraceProvider._format_alert(_api_problem(), provider)
+    assert alert.url == "https://ysa24221.apps.dynatrace.com/ui/apps/dynatrace.classic.problems/#problems/problemdetails;pid=-3061187654246811781_1758550140000V2"
+    assert DynatraceProvider._format_alert(_api_problem(), None).url is None
 
 
 @pytest.mark.parametrize(
@@ -69,10 +91,14 @@ def test_webhook_payload_still_maps():
         "ProblemSeverity": "RESOURCE_CONTENTION",
         "ProblemImpact": "INFRASTRUCTURE",
         "ProblemURL": "https://ysa24221.apps.dynatrace.com/ui/apps/dynatrace.classic.problems/#problems/problemdetails;pid=x",
-        "ImpactedEntities": [],
+        "ImpactedEntities": [{"type": "HOST", "name": "INFVPLAWS02", "entity": "HOST-1"}],
+        "PID": "P-2609315",
         "Tags": "",
     }
     alert = DynatraceProvider._format_alert(event)
     assert alert.status == AlertStatus.RESOLVED
     assert alert.severity == AlertSeverity.WARNING
     assert alert.name == "High Memory"
+    assert alert.service == "INFVPLAWS02"
+    assert alert.description == "P-2609315: High Memory | Impacted: INFVPLAWS02 | Impact: INFRASTRUCTURE"
+    assert alert.url.startswith("https://ysa24221.apps.dynatrace.com/")

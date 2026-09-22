@@ -222,6 +222,31 @@ class DynatraceProvider(BaseProvider):
         return scopes
 
     @staticmethod
+    def _entity_names(entities) -> list[str]:
+        """Names of Dynatrace entities from the Problems API / webhook (ImpactedEntities) shapes."""
+        names = []
+        for entity in entities or []:
+            if isinstance(entity, dict):
+                name = entity.get("name") or entity.get("entityName")
+                if name:
+                    names.append(str(name))
+            elif isinstance(entity, str) and entity:
+                names.append(entity)
+        return names
+
+    @staticmethod
+    def _problem_url(provider_instance: "BaseProvider", problem_id: str) -> str | None:
+        """Deep link to the problem in the Dynatrace UI (only the environment id is needed)."""
+        authentication_config = getattr(provider_instance, "authentication_config", None)
+        environment_id = getattr(authentication_config, "environment_id", None)
+        if not environment_id or not problem_id:
+            return None
+        return (
+            f"https://{environment_id}.apps.dynatrace.com/ui/apps/dynatrace.classic.problems/"
+            f"#problems/problemdetails;pid={problem_id}"
+        )
+
+    @staticmethod
     def _format_alert(
         event: dict, provider_instance: "BaseProvider" = None
     ) -> AlertDto:
@@ -250,20 +275,33 @@ class DynatraceProvider(BaseProvider):
                     url = quote(url, safe=":/%#?=@&;+!")
                 except Exception as e:
                     logger.exception(f"Failed to quote URL: {e}")
+            entity_names = DynatraceProvider._entity_names(impacted_entities)
+            if not entity_names and impacted_entity_names:
+                entity_names = [
+                    n.strip()
+                    for n in str(impacted_entity_names).split(",")
+                    if n.strip()
+                ]
+            description = f"{pid}: {event.get('ProblemTitle')}" if pid else event.get("ProblemTitle")
+            if entity_names:
+                description += f" | Impacted: {', '.join(entity_names)}"
+            if event.get("ProblemImpact"):
+                description += f" | Impact: {event.get('ProblemImpact')}"
             alert_dto = AlertDto(
                 id=event.get("ProblemID"),
                 name=event.get("ProblemTitle"),
                 status=status,
                 severity=severity,
-                lastReceived=datetime.datetime.now().isoformat(),
-                description=json.dumps(
-                    event.get("ImpactedEntities", {})
-                ),  # was asked by a user (should be configurable)
+                lastReceived=datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
+                description=description,
                 source=["dynatrace"],
                 impact=event.get("ProblemImpact"),
                 tags=tags,
                 impactedEntities=impacted_entities,
                 url=url,
+                service=entity_names[0] if entity_names else None,
+                display_id=pid or None,
+                affected_entity_names=", ".join(entity_names) or None,
                 problem_details_json=problem_details_json,
                 problem_details_jsonv2=problem_details_jsonv2,
                 problem_details_text=problem_details_text,
@@ -286,17 +324,24 @@ class DynatraceProvider(BaseProvider):
                 event.pop("status"), AlertStatus.FIRING
             )
             name = event.pop("title")
-            description = f"{display_id}: {name}"
             impact = event.pop("impactLevel")
             tags = event.pop("entityTags")
             impacted_entities = event.pop("impactedEntities", [])
-            url = event.pop("ProblemURL", None)
-            if url:
-                # Make the URL safe by properly encoding special characters
-                try:
-                    url = quote(url, safe=":/%#?=@&;+!")
-                except Exception as e:
-                    logger.exception(f"Failed to quote URL: {e}")
+            affected_entities = event.get("affectedEntities", [])
+            root_cause_entity = event.get("rootCauseEntity") or {}
+            management_zones = DynatraceProvider._entity_names(event.get("managementZones"))
+            alerting_profiles = DynatraceProvider._entity_names(event.get("problemFilters"))
+            affected_names = DynatraceProvider._entity_names(affected_entities) or DynatraceProvider._entity_names(impacted_entities)
+            root_cause_name = root_cause_entity.get("name") if isinstance(root_cause_entity, dict) else None
+            description = f"{display_id}: {name}"
+            if affected_names:
+                description += f" | Affected: {', '.join(affected_names)}"
+            if root_cause_name:
+                description += f" | Root cause: {root_cause_name}"
+            if impact:
+                description += f" | Impact: {impact}"
+            # the Problems API has no URL field; build the deep link from the environment id
+            url = DynatraceProvider._problem_url(provider_instance, _id)
             lastReceived = datetime.datetime.fromtimestamp(
                 event.pop("startTime") / 1000, tz=datetime.timezone.utc
             )
@@ -313,6 +358,11 @@ class DynatraceProvider(BaseProvider):
                 impactedEntities=impacted_entities,
                 url=url,
                 display_id=display_id,
+                service=affected_names[0] if affected_names else None,
+                affected_entity_names=", ".join(affected_names) or None,
+                root_cause=root_cause_name,
+                management_zone_names=", ".join(management_zones) or None,
+                alerting_profiles=", ".join(alerting_profiles) or None,
                 **event,  # any other field
             )
         alert_dto.fingerprint = DynatraceProvider.get_alert_fingerprint(
