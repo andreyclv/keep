@@ -496,9 +496,12 @@ class CloudwatchProvider(BaseProvider, ProviderHealthMixin):
         self.logger.info("Setting up webhook with url %s", keep_api_url)
         cloudwatch_client = self.__generate_client("cloudwatch")
         sns_client = self.__generate_client("sns")
-        resp = cloudwatch_client.describe_alarms()
-        alarms = resp.get("MetricAlarms", [])
-        alarms.extend(resp.get("CompositeAlarms"))
+        # describe_alarms returns at most 50 alarms per page; accounts with more
+        # alarms would otherwise never get their remaining alarms hooked
+        alarms = []
+        for page in cloudwatch_client.get_paginator("describe_alarms").paginate():
+            alarms.extend(page.get("MetricAlarms", []))
+            alarms.extend(page.get("CompositeAlarms", []))
         subscribed_topics = []
         # for each alarm, we need to iterate the actions topics and subscribe to them
         for alarm in alarms:
