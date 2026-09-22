@@ -23,8 +23,8 @@ Entity types: `hostname`, `domain`, `url` (a full URL contributes a domain and a
 | `dashboards_url` | no | Dashboards base URL for Discover links, e.g. `https://logs.example.com/_dashboards` |
 | `search_profiles` | no | YAML or JSON, schema below |
 
-The user needs `cluster_monitor` and `cluster_composite_ops_ro` (for `_msearch`) at cluster level, and `read`,
-`indices_monitor` and `indices:admin/mappings/get` on the index patterns in the profiles.
+The user needs `cluster_monitor` and `cluster_composite_ops_ro` (for `_msearch`) at cluster level, and the `read`
+action group on the index patterns in the profiles (search, msearch and field_caps).
 
 ## Search profiles
 

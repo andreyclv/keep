@@ -203,30 +203,27 @@ class OpensearchProvider(BaseProvider):
         return scopes
 
     def validate_profiles(self) -> list[str]:
-        """Resolve every pattern and check that configured fields exist. Returns human-readable problems."""
+        """
+        Check every family: the patterns match at least one index and the configured fields exist.
+        Uses only _field_caps (covered by the 'read' action group), so a read-only user suffices.
+        """
         problems = []
         if not self.profiles["families"]:
             return ["no search profiles configured"]
         for fam in self.profiles["families"]:
             patterns = ",".join(fam["patterns"])
-            try:
-                resolved = self._request("GET", f"_resolve/index/{quote(patterns, safe='*,-_')}")
-            except Exception as e:
-                problems.append(f"{fam['name']}: cannot resolve {patterns} ({e})")
-                continue
-            if not resolved.get("indices") and not resolved.get("aliases") and not resolved.get("data_streams"):
-                problems.append(f"{fam['name']}: no index matches {patterns}")
-                continue
             wanted = set(self._fields_used(fam))
-            if not wanted:
-                continue
+            fields_param = ",".join(sorted(wanted)) if wanted else "*"
             try:
                 caps = self._request(
                     "GET",
-                    f"{quote(patterns, safe='*,-_')}/_field_caps?fields={quote(','.join(sorted(wanted)), safe=',.*')}",
+                    f"{quote(patterns, safe='*,-_')}/_field_caps?fields={quote(fields_param, safe=',.*')}&ignore_unavailable=true&allow_no_indices=true",
                 )
             except Exception as e:
-                problems.append(f"{fam['name']}: field_caps failed ({e})")
+                problems.append(f"{fam['name']}: field_caps on {patterns} failed ({e})")
+                continue
+            if not caps.get("indices"):
+                problems.append(f"{fam['name']}: no index matches {patterns}")
                 continue
             missing = sorted(f for f in wanted if f not in (caps.get("fields") or {}))
             if missing:

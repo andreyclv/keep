@@ -211,13 +211,10 @@ def test_validate_profiles_reports_missing_fields_and_patterns():
     p = _provider()
 
     def fake_request(method, path, body=None, ndjson=None, timeout=60):
-        if path.startswith("_resolve/index/"):
-            if "winlogbeat" in path:
-                return {"indices": []}
-            return {"indices": [{"name": "x"}]}
-        if "_field_caps" in path:
-            return {"fields": {"timestamp": {}, "object.keyword": {}, "severity.keyword": {}, "logMessage": {}, "method": {}, "sComputerName.keyword": {}, "csHost.keyword": {}, "csUri.keyword": {}, "csStatus.keyword": {}, "csUri": {}, "csStatus": {}, "metadata.dropped.reason.keyword": {}, "metadata.dropped.reason": {}}}
-        raise AssertionError(path)
+        assert "_field_caps" in path
+        if path.startswith("winlogbeat"):
+            return {"indices": [], "fields": {}}
+        return {"indices": ["x"], "fields": {"timestamp": {}, "object.keyword": {}, "severity.keyword": {}, "logMessage": {}, "method": {}, "sComputerName.keyword": {}, "csHost.keyword": {}, "csUri.keyword": {}, "csStatus.keyword": {}, "csUri": {}, "csStatus": {}, "metadata.dropped.reason.keyword": {}, "metadata.dropped.reason": {}}}
 
     with patch.object(OpensearchProvider, "_request", side_effect=fake_request):
         problems = p.validate_profiles()
