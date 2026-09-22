@@ -30,26 +30,32 @@ def _provider(timezone):
     return SimpleNamespace(authentication_config=SimpleNamespace(timezone=timezone))
 
 
+def _utc(alert):
+    # AlertDto normalizes lastReceived to UTC ISO 8601 with a Z suffix
+    return datetime.datetime.fromisoformat(alert.lastReceived.replace("Z", "+00:00"))
+
+
+UTC_1353 = datetime.datetime(2026, 9, 22, 13, 53, 43, tzinfo=datetime.timezone.utc)
+UTC_1053 = datetime.datetime(2026, 9, 22, 10, 53, 43, tzinfo=datetime.timezone.utc)
+
+
 def test_last_received_defaults_to_utc_without_provider_instance():
     alert = ZabbixProvider._format_alert(_event(), None)
-    assert alert.lastReceived == "2026-09-22T13:53:43+00:00"
+    assert _utc(alert) == UTC_1353
 
 
 def test_last_received_uses_configured_timezone():
     alert = ZabbixProvider._format_alert(_event(), _provider("Asia/Jerusalem"))
     # 13:53:43 in Jerusalem (UTC+3 in September) is 10:53:43 UTC
-    parsed = datetime.datetime.fromisoformat(alert.lastReceived)
-    assert parsed.utcoffset() == datetime.timedelta(hours=3)
-    assert parsed.astimezone(datetime.timezone.utc).isoformat() == "2026-09-22T10:53:43+00:00"
+    assert _utc(alert) == UTC_1053
 
 
 @pytest.mark.parametrize("timezone", [None, "", "Not/AZone"])
 def test_last_received_falls_back_to_utc_on_bad_timezone(timezone):
     alert = ZabbixProvider._format_alert(_event(), _provider(timezone))
-    assert alert.lastReceived == "2026-09-22T13:53:43+00:00"
+    assert _utc(alert) == UTC_1353
 
 
 def test_test_message_placeholder_is_replaced_with_now():
     alert = ZabbixProvider._format_alert(_event(lastReceived="{DATE} {TIME}"), _provider("Asia/Jerusalem"))
-    parsed = datetime.datetime.fromisoformat(alert.lastReceived)
-    assert abs((datetime.datetime.now(tz=datetime.timezone.utc) - parsed).total_seconds()) < 60
+    assert abs((datetime.datetime.now(tz=datetime.timezone.utc) - _utc(alert)).total_seconds()) < 60
