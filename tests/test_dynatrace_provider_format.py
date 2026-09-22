@@ -62,7 +62,7 @@ def test_api_problem_url_is_built_from_environment_id():
 
     provider = SimpleNamespace(authentication_config=SimpleNamespace(environment_id="ysa24221"))
     alert = DynatraceProvider._format_alert(_api_problem(), provider)
-    assert alert.url == "https://ysa24221.apps.dynatrace.com/ui/apps/dynatrace.classic.problems/#problems/problemdetails;pid=-3061187654246811781_1758550140000V2"
+    assert str(alert.url) == "https://ysa24221.apps.dynatrace.com/ui/apps/dynatrace.davis.problems/problem/-3061187654246811781_1758550140000V2"
     assert DynatraceProvider._format_alert(_api_problem(), None).url is None
 
 
@@ -101,4 +101,4 @@ def test_webhook_payload_still_maps():
     assert alert.name == "High Memory"
     assert alert.service == "INFVPLAWS02"
     assert alert.description == "P-2609315: High Memory | Impacted: INFVPLAWS02 | Impact: INFRASTRUCTURE"
-    assert alert.url.startswith("https://ysa24221.apps.dynatrace.com/")
+    assert str(alert.url).startswith("https://ysa24221.apps.dynatrace.com/")

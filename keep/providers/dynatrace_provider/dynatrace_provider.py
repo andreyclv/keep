@@ -241,10 +241,9 @@ class DynatraceProvider(BaseProvider):
         environment_id = getattr(authentication_config, "environment_id", None)
         if not environment_id or not problem_id:
             return None
-        return (
-            f"https://{environment_id}.apps.dynatrace.com/ui/apps/dynatrace.classic.problems/"
-            f"#problems/problemdetails;pid={problem_id}"
-        )
+        # Problems app deep link (no ';' matrix params: AlertDto percent-encodes them, which
+        # would break the classic #problems/problemdetails;pid= form)
+        return f"https://{environment_id}.apps.dynatrace.com/ui/apps/dynatrace.davis.problems/problem/{problem_id}"
 
     @staticmethod
     def _format_alert(
