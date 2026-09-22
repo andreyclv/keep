@@ -82,17 +82,25 @@ class DynatraceProvider(BaseProvider):
     ]
     FINGERPRINT_FIELDS = ["id"]
 
+    # Problems API v2 severityLevel values plus the webhook {ProblemSeverity} placeholder values
+    # https://docs.dynatrace.com/docs/dynatrace-api/environment-api/problems-v2/problems/get-problems-list
     SEVERITIES_MAP = {
         "AVAILABILITY": AlertSeverity.HIGH,
         "ERROR": AlertSeverity.CRITICAL,
         "PERFORMANCE": AlertSeverity.WARNING,
         "RESOURCE": AlertSeverity.WARNING,
+        "RESOURCE_CONTENTION": AlertSeverity.WARNING,
+        "MONITORING_UNAVAILABLE": AlertSeverity.WARNING,
         "CUSTOM": AlertSeverity.INFO,
+        "CUSTOM_ALERT": AlertSeverity.INFO,
+        "INFO": AlertSeverity.INFO,
     }
 
+    # webhook {State} is OPEN / RESOLVED, Problems API v2 status is OPEN / CLOSED
     STATUS_MAP = {
         "OPEN": AlertStatus.FIRING,
         "RESOLVED": AlertStatus.RESOLVED,
+        "CLOSED": AlertStatus.RESOLVED,
     }
 
     def __init__(
@@ -267,7 +275,9 @@ class DynatraceProvider(BaseProvider):
         # else, problem from the problem API
         else:
             _id = event.pop("problemId")
-            name = event.pop("displayId")
+            # keep the alert name consistent with the webhook path (problem title);
+            # the human-readable display id (P-1234) is kept as a separate field
+            display_id = event.pop("displayId")
             # format severity and status to keep's format
             severity = DynatraceProvider.SEVERITIES_MAP.get(
                 event.pop("severityLevel", None), AlertSeverity.INFO
@@ -275,7 +285,8 @@ class DynatraceProvider(BaseProvider):
             status = DynatraceProvider.STATUS_MAP.get(
                 event.pop("status"), AlertStatus.FIRING
             )
-            description = event.pop("title")
+            name = event.pop("title")
+            description = f"{display_id}: {name}"
             impact = event.pop("impactLevel")
             tags = event.pop("entityTags")
             impacted_entities = event.pop("impactedEntities", [])
@@ -301,6 +312,7 @@ class DynatraceProvider(BaseProvider):
                 tags=tags,
                 impactedEntities=impacted_entities,
                 url=url,
+                display_id=display_id,
                 **event,  # any other field
             )
         alert_dto.fingerprint = DynatraceProvider.get_alert_fingerprint(
