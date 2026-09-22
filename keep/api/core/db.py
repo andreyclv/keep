@@ -4934,6 +4934,9 @@ def confirm_predicted_incident_by_id(
         ).update(
             {
                 "is_visible": True,
+                # a confirmed candidate is a real incident: it must leave the candidates
+                # list and appear in the default incident list (is_candidate == false)
+                "is_candidate": False,
             }
         )
 
