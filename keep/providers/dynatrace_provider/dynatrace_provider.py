@@ -132,7 +132,7 @@ class DynatraceProvider(BaseProvider):
             raise Exception(f"Failed to get problems from Dynatrace: {response.text}")
         else:
             return [
-                self._format_alert(event)
+                self._format_alert(event, provider_instance=self)
                 for event in response.json().get("problems", [])
             ]
 
