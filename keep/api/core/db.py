@@ -2446,6 +2446,14 @@ def create_incident_for_grouping_rule(
         session.flush()
         if rule.incident_prefix:
             incident.user_generated_name = f"{rule.incident_prefix}-{incident.running_number} - {incident.user_generated_name}"
+        # the incident candidates ("predictions") view renders ai_generated_name / generated_summary,
+        # which only the AI correlator used to fill; give rule-based candidates the same fields
+        incident.ai_generated_name = incident.user_generated_name
+        incident.generated_summary = (
+            f"Correlation rule '{rule.name}'"
+            + (f": {rule.group_description}" if getattr(rule, "group_description", None) else "")
+            + (f" (grouped by {', '.join(rule.grouping_criteria)})" if getattr(rule, "grouping_criteria", None) else "")
+        )
         session.commit()
         session.refresh(incident)
     return incident
