@@ -193,6 +193,17 @@ def test_query_domain_only_hits_families_that_know_domains():
     assert result["top_error"] == ""
 
 
+def test_top_error_falls_back_to_newest_error_sample():
+    p = _provider()
+    resp = {"responses": [{"hits": {"total": {"value": 1}, "hits": [
+        {"_index": "il2-iis-2026-09-22", "_source": {"timestamp": "2026-09-22T17:00:00Z", "csUri": "/very/long/uri", "csStatus": "500"}}]},
+        "aggregations": {"by_index": {"buckets": [{"key": "il2-iis-2026-09-22", "doc_count": 9}]}, "errors": {"doc_count": 1, "top_messages": {"buckets": []}}}}]}
+    with patch.object(OpensearchProvider, "_request", return_value=resp):
+        result = p._query(entity_type="domain", value="m.imlive.com")
+    assert result["total_docs"] == 9
+    assert result["top_error"] == "/very/long/uri"
+
+
 def test_query_rejects_bad_input():
     p = _provider()
     with pytest.raises(Exception):

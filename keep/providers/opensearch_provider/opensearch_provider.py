@@ -501,8 +501,13 @@ class OpensearchProvider(BaseProvider):
             result["by_family"].append(family)
         result["top_messages"].sort(key=lambda m: -m["count"])
         result["top_messages"] = result["top_messages"][:10]
-        # template-safe scalar: "" when there are no errors
-        result["top_error"] = result["top_messages"][0]["message"] if result["top_messages"] else ""
+        # template-safe scalar: the most frequent error message, else the newest error sample
+        # (long messages exceed the keyword ignore_above and never show up in the terms aggregation)
+        if result["top_messages"]:
+            result["top_error"] = result["top_messages"][0]["message"]
+        else:
+            error_samples = [s for s in result["samples"] if s.get("is_error") and s.get("message")]
+            result["top_error"] = str(error_samples[0]["message"])[:500] if error_samples else ""
         result["samples"].sort(key=lambda s: str(s.get("timestamp") or ""), reverse=True)
         result["samples"] = result["samples"][:size]
         result["dashboards_url"] = self._dashboards_link(entity_type, entity, lookback)
