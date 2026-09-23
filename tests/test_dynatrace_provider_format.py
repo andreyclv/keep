@@ -102,3 +102,25 @@ def test_webhook_payload_still_maps():
     assert alert.service == "INFVPLAWS02"
     assert alert.description == "P-2609315: High Memory | Impacted: INFVPLAWS02 | Impact: INFRASTRUCTURE"
     assert str(alert.url).startswith("https://ysa24221.apps.dynatrace.com/")
+
+
+def test_entity_tags_are_flattened_and_cloudfront_domain_promoted():
+    problem = _api_problem(
+        title="Cloudfront 4xx errors high",
+        impactedEntities=[{"entityId": {"id": "CUSTOM_DEVICE-1", "type": "cloud:aws:cloud_front"}, "name": "E33H3ZCC3CRBVW"}],
+        affectedEntities=[{"entityId": {"id": "CUSTOM_DEVICE-1", "type": "cloud:aws:cloud_front"}, "name": "E33H3ZCC3CRBVW"}],
+        entityTags=[{"context": "CONTEXTLESS", "key": "AWSAcccount", "value": "allcam"}, {"context": "CONTEXTLESS", "key": "CloudfrontDomain", "value": "wild-match.com"}, {"context": "CONTEXTLESS", "key": "monitorEnable", "value": "true"}],
+    )
+    alert = DynatraceProvider._format_alert(problem)
+    assert alert.entity_tags == {"AWSAcccount": "allcam", "CloudfrontDomain": "wild-match.com", "monitorEnable": "true"}
+    assert alert.domain == "wild-match.com"
+    assert alert.aws_account == "allcam"
+    assert alert.cloudfront_distribution_id == "E33H3ZCC3CRBVW"
+
+
+def test_webhook_tags_string_is_parsed():
+    event = {"ProblemID": "x", "ProblemTitle": "t", "State": "OPEN", "ProblemSeverity": "CUSTOM_ALERT", "ImpactedEntities": [{"type": "CUSTOM_DEVICE", "name": "E33H3ZCC3CRBVW", "entity": "CUSTOM_DEVICE-1"}], "Tags": "[AWSAcccount:allcam, CloudfrontDomain:wild-match.com, monitorEnable]"}
+    alert = DynatraceProvider._format_alert(event)
+    assert alert.domain == "wild-match.com"
+    assert alert.entity_tags["monitorEnable"] == "true"
+    assert alert.cloudfront_distribution_id == "E33H3ZCC3CRBVW"

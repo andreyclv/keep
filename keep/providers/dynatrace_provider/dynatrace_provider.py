@@ -5,6 +5,7 @@ Kafka Provider is a class that allows to ingest/digest data from Grafana.
 import base64
 import dataclasses
 import datetime
+import re
 import json
 import logging
 import os
@@ -234,6 +235,60 @@ class DynatraceProvider(BaseProvider):
                 names.append(entity)
         return names
 
+    # entity tag keys that identify the thing the problem is about; promoted to top-level alert fields
+    TAG_PROMOTIONS = {
+        "CloudfrontDomain": "domain",
+        "AWSAcccount": "aws_account",  # sic: the tag key is misspelled in the Dynatrace environment
+        "AWSAccount": "aws_account",
+    }
+
+    @staticmethod
+    def _tags_to_dict(tags) -> dict:
+        """
+        Dynatrace tags come as a list of {key, value, context} (Problems API), or as the webhook
+        {Tags} placeholder rendered to "[key:value, key2:value2]". Returns {key: value}.
+        """
+        out = {}
+        if isinstance(tags, dict):
+            return {str(k): str(v) for k, v in tags.items()}
+        if isinstance(tags, str):
+            for part in tags.strip("[] ").split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                key, _, value = part.partition(":")
+                out[key.strip()] = value.strip() if value else "true"
+            return out
+        for tag in tags or []:
+            if isinstance(tag, dict) and tag.get("key"):
+                out[str(tag["key"])] = str(tag.get("value") if tag.get("value") is not None else "true")
+            elif isinstance(tag, str) and tag:
+                key, _, value = tag.partition(":")
+                out[key.strip()] = value.strip() if value else "true"
+        return out
+
+    @classmethod
+    def _promoted_tag_fields(cls, tags) -> dict:
+        tag_dict = cls._tags_to_dict(tags)
+        fields = {"entity_tags": tag_dict} if tag_dict else {}
+        for key, field in cls.TAG_PROMOTIONS.items():
+            if tag_dict.get(key) and field not in fields:
+                fields[field] = tag_dict[key]
+        return fields
+
+    @staticmethod
+    def _cloudfront_id(entities) -> str | None:
+        for entity in entities or []:
+            if not isinstance(entity, dict):
+                continue
+            etype = str((entity.get("entityId") or {}).get("type") or entity.get("type") or "").lower()
+            name = entity.get("name") or entity.get("entityName")
+            if "cloud_front" in etype or "cloudfront" in etype:
+                return name
+            if isinstance(name, str) and re.fullmatch(r"E[A-Z0-9]{12,14}", name):
+                return name
+        return None
+
     @staticmethod
     def _problem_url(provider_instance: "BaseProvider", problem_id: str) -> str | None:
         """Deep link to the problem in the Dynatrace UI (only the environment id is needed)."""
@@ -301,6 +356,8 @@ class DynatraceProvider(BaseProvider):
                 service=entity_names[0] if entity_names else None,
                 display_id=pid or None,
                 affected_entity_names=", ".join(entity_names) or None,
+                cloudfront_distribution_id=DynatraceProvider._cloudfront_id(impacted_entities),
+                **DynatraceProvider._promoted_tag_fields(tags),
                 problem_details_json=problem_details_json,
                 problem_details_jsonv2=problem_details_jsonv2,
                 problem_details_text=problem_details_text,
@@ -359,6 +416,8 @@ class DynatraceProvider(BaseProvider):
                 display_id=display_id,
                 service=affected_names[0] if affected_names else None,
                 affected_entity_names=", ".join(affected_names) or None,
+                cloudfront_distribution_id=DynatraceProvider._cloudfront_id(impacted_entities or affected_entities),
+                **DynatraceProvider._promoted_tag_fields(tags),
                 root_cause=root_cause_name,
                 management_zone_names=", ".join(management_zones) or None,
                 alerting_profiles=", ".join(alerting_profiles) or None,
