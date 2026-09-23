@@ -30,7 +30,7 @@ from keep.api.models.db.alert import (
 )
 from keep.api.models.db.facet import FacetType
 from keep.api.models.facet import FacetDto, FacetOptionDto, FacetOptionsQueryDto
-from keep.api.models.incident import IncidentSorting
+from keep.api.models.incident import IncidentSorting, IncidentStatus
 from keep.api.models.query import SortOptionsDto
 from keep.api.core.cel_to_sql.ast_nodes import DataType
 
