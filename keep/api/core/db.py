@@ -3978,6 +3978,10 @@ def get_last_incidents(
             Incident.is_candidate == is_candidate,
             Incident.is_visible == True,
         )
+        if is_candidate:
+            # discarding a candidate soft-deletes it (status=deleted); the candidates view has no
+            # status filter of its own, so deleted candidates must be excluded here
+            query = query.filter(Incident.status != IncidentStatus.DELETED.value)
 
         if allowed_incident_ids:
             query = query.filter(Incident.id.in_(allowed_incident_ids))
