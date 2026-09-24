@@ -154,7 +154,19 @@ class RulesEngine:
                                 )
                                 alerts_count = max(incident.alerts_count, firing_count)
                                 if alerts_count >= rule.threshold:
-                                    if not rule.require_approve:
+                                    if rule.require_approve:
+                                        # candidates must become visible to be listed (and approved)
+                                        # in the incident candidates view; they stay is_candidate=True
+                                        # until a human confirms them
+                                        if rule.create_on == "any" or (
+                                            rule.create_on == "all"
+                                            and len(rule_groups) == len(matched_rules)
+                                        ):
+                                            self.logger.info(
+                                                "Threshold reached, exposing incident candidate for approval"
+                                            )
+                                            incident.is_visible = True
+                                    else:
                                         if rule.create_on == "any" or (
                                             rule.create_on == "all"
                                             and len(rule_groups) == len(matched_rules)

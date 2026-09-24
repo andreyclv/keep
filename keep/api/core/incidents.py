@@ -30,7 +30,7 @@ from keep.api.models.db.alert import (
 )
 from keep.api.models.db.facet import FacetType
 from keep.api.models.facet import FacetDto, FacetOptionDto, FacetOptionsQueryDto
-from keep.api.models.incident import IncidentSorting
+from keep.api.models.incident import IncidentSorting, IncidentStatus
 from keep.api.models.query import SortOptionsDto
 from keep.api.core.cel_to_sql.ast_nodes import DataType
 
@@ -349,6 +349,10 @@ def __build_last_incidents_total_count_query(
     )["query"]
 
     query = query.filter(Incident.is_candidate == is_candidate)
+    if is_candidate:
+        # discarding a candidate soft-deletes it (status=deleted); the candidates view has no status
+        # filter of its own, so deleted candidates must be excluded here
+        query = query.filter(Incident.status != IncidentStatus.DELETED.value)
 
     if allowed_incident_ids:
         query = query.filter(Incident.id.in_(allowed_incident_ids))
@@ -431,6 +435,8 @@ def __build_last_incidents_query(
     sql_query = sql_query.order_by(text(sort_by_exp))
 
     sql_query = sql_query.filter(Incident.is_candidate == is_candidate)
+    if is_candidate:
+        sql_query = sql_query.filter(Incident.status != IncidentStatus.DELETED.value)
 
     if allowed_incident_ids:
         sql_query = sql_query.filter(Incident.id.in_(allowed_incident_ids))

@@ -2446,6 +2446,14 @@ def create_incident_for_grouping_rule(
         session.flush()
         if rule.incident_prefix:
             incident.user_generated_name = f"{rule.incident_prefix}-{incident.running_number} - {incident.user_generated_name}"
+        # the incident candidates ("predictions") view renders ai_generated_name / generated_summary,
+        # which only the AI correlator used to fill; give rule-based candidates the same fields
+        incident.ai_generated_name = incident.user_generated_name
+        incident.generated_summary = (
+            f"Correlation rule '{rule.name}'"
+            + (f": {rule.group_description}" if getattr(rule, "group_description", None) else "")
+            + (f" (grouped by {', '.join(rule.grouping_criteria)})" if getattr(rule, "grouping_criteria", None) else "")
+        )
         session.commit()
         session.refresh(incident)
     return incident
@@ -3970,6 +3978,10 @@ def get_last_incidents(
             Incident.is_candidate == is_candidate,
             Incident.is_visible == True,
         )
+        if is_candidate:
+            # discarding a candidate soft-deletes it (status=deleted); the candidates view has no
+            # status filter of its own, so deleted candidates must be excluded here
+            query = query.filter(Incident.status != IncidentStatus.DELETED.value)
 
         if allowed_incident_ids:
             query = query.filter(Incident.id.in_(allowed_incident_ids))
@@ -4921,7 +4933,6 @@ def confirm_predicted_incident_by_id(
                 Incident.id == incident_id,
                 Incident.is_candidate == expression.true(),
             )
-            .options(joinedload(Incident.alerts))
         ).first()
 
         if not incident:
@@ -4934,6 +4945,9 @@ def confirm_predicted_incident_by_id(
         ).update(
             {
                 "is_visible": True,
+                # a confirmed candidate is a real incident: it must leave the candidates
+                # list and appear in the default incident list (is_candidate == false)
+                "is_candidate": False,
             }
         )
 

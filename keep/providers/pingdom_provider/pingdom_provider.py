@@ -198,6 +198,9 @@ class PingdomProvider(BaseProvider):
         else:
             last_received = datetime.datetime.now().isoformat()
 
+        check_params = event.get("check_params") or {}
+        hostname = check_params.get("hostname") or None
+        full_url = check_params.get("full_url") or None
         alert = AlertDto(
             id=event.get("check_id"),
             fingerprint=str(event.get("check_id")),
@@ -207,7 +210,12 @@ class PingdomProvider(BaseProvider):
             lastReceived=last_received,
             description=event.get("long_description"),
             source=["pingdom"],
-            check_params=event.get("check_params", {}),
+            # the checked hostname is the entity this alert is about: lets mapping rules, correlation
+            # (grouping by service) and domain/url enrichment work without extra configuration
+            service=hostname,
+            hostname=hostname,
+            url=full_url,
+            check_params=check_params,
             check_type=event.get("check_type", None),
             short_description=event.get("description", None),
             previous_status=event.get("previous_state", None),

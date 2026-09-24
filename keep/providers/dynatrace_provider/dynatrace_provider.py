@@ -5,6 +5,7 @@ Kafka Provider is a class that allows to ingest/digest data from Grafana.
 import base64
 import dataclasses
 import datetime
+import re
 import json
 import logging
 import os
@@ -82,17 +83,25 @@ class DynatraceProvider(BaseProvider):
     ]
     FINGERPRINT_FIELDS = ["id"]
 
+    # Problems API v2 severityLevel values plus the webhook {ProblemSeverity} placeholder values
+    # https://docs.dynatrace.com/docs/dynatrace-api/environment-api/problems-v2/problems/get-problems-list
     SEVERITIES_MAP = {
         "AVAILABILITY": AlertSeverity.HIGH,
         "ERROR": AlertSeverity.CRITICAL,
         "PERFORMANCE": AlertSeverity.WARNING,
         "RESOURCE": AlertSeverity.WARNING,
+        "RESOURCE_CONTENTION": AlertSeverity.WARNING,
+        "MONITORING_UNAVAILABLE": AlertSeverity.WARNING,
         "CUSTOM": AlertSeverity.INFO,
+        "CUSTOM_ALERT": AlertSeverity.INFO,
+        "INFO": AlertSeverity.INFO,
     }
 
+    # webhook {State} is OPEN / RESOLVED, Problems API v2 status is OPEN / CLOSED
     STATUS_MAP = {
         "OPEN": AlertStatus.FIRING,
         "RESOLVED": AlertStatus.RESOLVED,
+        "CLOSED": AlertStatus.RESOLVED,
     }
 
     def __init__(
@@ -124,7 +133,7 @@ class DynatraceProvider(BaseProvider):
             raise Exception(f"Failed to get problems from Dynatrace: {response.text}")
         else:
             return [
-                self._format_alert(event)
+                self._format_alert(event, provider_instance=self)
                 for event in response.json().get("problems", [])
             ]
 
@@ -214,6 +223,84 @@ class DynatraceProvider(BaseProvider):
         return scopes
 
     @staticmethod
+    def _entity_names(entities) -> list[str]:
+        """Names of Dynatrace entities from the Problems API / webhook (ImpactedEntities) shapes."""
+        names = []
+        for entity in entities or []:
+            if isinstance(entity, dict):
+                name = entity.get("name") or entity.get("entityName")
+                if name:
+                    names.append(str(name))
+            elif isinstance(entity, str) and entity:
+                names.append(entity)
+        return names
+
+    # entity tag keys that identify the thing the problem is about; promoted to top-level alert fields
+    TAG_PROMOTIONS = {
+        "CloudfrontDomain": "domain",
+        "AWSAcccount": "aws_account",  # sic: the tag key is misspelled in the Dynatrace environment
+        "AWSAccount": "aws_account",
+    }
+
+    @staticmethod
+    def _tags_to_dict(tags) -> dict:
+        """
+        Dynatrace tags come as a list of {key, value, context} (Problems API), or as the webhook
+        {Tags} placeholder rendered to "[key:value, key2:value2]". Returns {key: value}.
+        """
+        out = {}
+        if isinstance(tags, dict):
+            return {str(k): str(v) for k, v in tags.items()}
+        if isinstance(tags, str):
+            for part in tags.strip("[] ").split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                key, _, value = part.partition(":")
+                out[key.strip()] = value.strip() if value else "true"
+            return out
+        for tag in tags or []:
+            if isinstance(tag, dict) and tag.get("key"):
+                out[str(tag["key"])] = str(tag.get("value") if tag.get("value") is not None else "true")
+            elif isinstance(tag, str) and tag:
+                key, _, value = tag.partition(":")
+                out[key.strip()] = value.strip() if value else "true"
+        return out
+
+    @classmethod
+    def _promoted_tag_fields(cls, tags) -> dict:
+        tag_dict = cls._tags_to_dict(tags)
+        fields = {"entity_tags": tag_dict} if tag_dict else {}
+        for key, field in cls.TAG_PROMOTIONS.items():
+            if tag_dict.get(key) and field not in fields:
+                fields[field] = tag_dict[key]
+        return fields
+
+    @staticmethod
+    def _cloudfront_id(entities) -> str | None:
+        for entity in entities or []:
+            if not isinstance(entity, dict):
+                continue
+            etype = str((entity.get("entityId") or {}).get("type") or entity.get("type") or "").lower()
+            name = entity.get("name") or entity.get("entityName")
+            if "cloud_front" in etype or "cloudfront" in etype:
+                return name
+            if isinstance(name, str) and re.fullmatch(r"E[A-Z0-9]{12,14}", name):
+                return name
+        return None
+
+    @staticmethod
+    def _problem_url(provider_instance: "BaseProvider", problem_id: str) -> str | None:
+        """Deep link to the problem in the Dynatrace UI (only the environment id is needed)."""
+        authentication_config = getattr(provider_instance, "authentication_config", None)
+        environment_id = getattr(authentication_config, "environment_id", None)
+        if not environment_id or not problem_id:
+            return None
+        # Problems app deep link (no ';' matrix params: AlertDto percent-encodes them, which
+        # would break the classic #problems/problemdetails;pid= form)
+        return f"https://{environment_id}.apps.dynatrace.com/ui/apps/dynatrace.davis.problems/problem/{problem_id}"
+
+    @staticmethod
     def _format_alert(
         event: dict, provider_instance: "BaseProvider" = None
     ) -> AlertDto:
@@ -242,20 +329,35 @@ class DynatraceProvider(BaseProvider):
                     url = quote(url, safe=":/%#?=@&;+!")
                 except Exception as e:
                     logger.exception(f"Failed to quote URL: {e}")
+            entity_names = DynatraceProvider._entity_names(impacted_entities)
+            if not entity_names and impacted_entity_names:
+                entity_names = [
+                    n.strip()
+                    for n in str(impacted_entity_names).split(",")
+                    if n.strip()
+                ]
+            description = f"{pid}: {event.get('ProblemTitle')}" if pid else event.get("ProblemTitle")
+            if entity_names:
+                description += f" | Impacted: {', '.join(entity_names)}"
+            if event.get("ProblemImpact"):
+                description += f" | Impact: {event.get('ProblemImpact')}"
             alert_dto = AlertDto(
                 id=event.get("ProblemID"),
                 name=event.get("ProblemTitle"),
                 status=status,
                 severity=severity,
-                lastReceived=datetime.datetime.now().isoformat(),
-                description=json.dumps(
-                    event.get("ImpactedEntities", {})
-                ),  # was asked by a user (should be configurable)
+                lastReceived=datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
+                description=description,
                 source=["dynatrace"],
                 impact=event.get("ProblemImpact"),
                 tags=tags,
                 impactedEntities=impacted_entities,
                 url=url,
+                service=entity_names[0] if entity_names else None,
+                display_id=pid or None,
+                affected_entity_names=", ".join(entity_names) or None,
+                cloudfront_distribution_id=DynatraceProvider._cloudfront_id(impacted_entities),
+                **DynatraceProvider._promoted_tag_fields(tags),
                 problem_details_json=problem_details_json,
                 problem_details_jsonv2=problem_details_jsonv2,
                 problem_details_text=problem_details_text,
@@ -267,7 +369,9 @@ class DynatraceProvider(BaseProvider):
         # else, problem from the problem API
         else:
             _id = event.pop("problemId")
-            name = event.pop("displayId")
+            # keep the alert name consistent with the webhook path (problem title);
+            # the human-readable display id (P-1234) is kept as a separate field
+            display_id = event.pop("displayId")
             # format severity and status to keep's format
             severity = DynatraceProvider.SEVERITIES_MAP.get(
                 event.pop("severityLevel", None), AlertSeverity.INFO
@@ -275,17 +379,25 @@ class DynatraceProvider(BaseProvider):
             status = DynatraceProvider.STATUS_MAP.get(
                 event.pop("status"), AlertStatus.FIRING
             )
-            description = event.pop("title")
+            name = event.pop("title")
             impact = event.pop("impactLevel")
             tags = event.pop("entityTags")
             impacted_entities = event.pop("impactedEntities", [])
-            url = event.pop("ProblemURL", None)
-            if url:
-                # Make the URL safe by properly encoding special characters
-                try:
-                    url = quote(url, safe=":/%#?=@&;+!")
-                except Exception as e:
-                    logger.exception(f"Failed to quote URL: {e}")
+            affected_entities = event.get("affectedEntities", [])
+            root_cause_entity = event.get("rootCauseEntity") or {}
+            management_zones = DynatraceProvider._entity_names(event.get("managementZones"))
+            alerting_profiles = DynatraceProvider._entity_names(event.get("problemFilters"))
+            affected_names = DynatraceProvider._entity_names(affected_entities) or DynatraceProvider._entity_names(impacted_entities)
+            root_cause_name = root_cause_entity.get("name") if isinstance(root_cause_entity, dict) else None
+            description = f"{display_id}: {name}"
+            if affected_names:
+                description += f" | Affected: {', '.join(affected_names)}"
+            if root_cause_name:
+                description += f" | Root cause: {root_cause_name}"
+            if impact:
+                description += f" | Impact: {impact}"
+            # the Problems API has no URL field; build the deep link from the environment id
+            url = DynatraceProvider._problem_url(provider_instance, _id)
             lastReceived = datetime.datetime.fromtimestamp(
                 event.pop("startTime") / 1000, tz=datetime.timezone.utc
             )
@@ -301,6 +413,14 @@ class DynatraceProvider(BaseProvider):
                 tags=tags,
                 impactedEntities=impacted_entities,
                 url=url,
+                display_id=display_id,
+                service=affected_names[0] if affected_names else None,
+                affected_entity_names=", ".join(affected_names) or None,
+                cloudfront_distribution_id=DynatraceProvider._cloudfront_id(impacted_entities or affected_entities),
+                **DynatraceProvider._promoted_tag_fields(tags),
+                root_cause=root_cause_name,
+                management_zone_names=", ".join(management_zones) or None,
+                alerting_profiles=", ".join(alerting_profiles) or None,
                 **event,  # any other field
             )
         alert_dto.fingerprint = DynatraceProvider.get_alert_fingerprint(

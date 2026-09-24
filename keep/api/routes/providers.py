@@ -818,13 +818,18 @@ def get_webhook_settings(
         webhookMarkdown = None
 
     logger.info("Got webhook settings", extra={"provider_type": provider_type})
+    # providers that only support automatic webhook installation (e.g. zabbix)
+    # do not define webhook_description / webhook_template
+    webhook_description = getattr(provider_class, "webhook_description", None) or ""
+    webhook_template = getattr(provider_class, "webhook_template", None) or ""
+
     return ProviderWebhookSettings(
-        webhookDescription=provider_class.webhook_description.format(
+        webhookDescription=webhook_description.format(
             keep_webhook_api_url=keep_webhook_api_url,
             api_key=webhook_api_key,
             keep_webhook_api_url_with_auth=keep_webhook_api_url_with_auth,
         ),
-        webhookTemplate=provider_class.webhook_template.format(
+        webhookTemplate=webhook_template.format(
             keep_webhook_api_url=keep_webhook_api_url,
             api_key=webhook_api_key,
             keep_webhook_api_url_with_auth=keep_webhook_api_url_with_auth,

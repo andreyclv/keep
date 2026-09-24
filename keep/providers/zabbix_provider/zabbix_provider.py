@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import random
+import zoneinfo
 from typing import Union
 
 import pydantic
@@ -55,12 +56,27 @@ class ZabbixProviderAuthConfig:
         },
         default=True,
     )
+    timezone: str = dataclasses.field(
+        metadata={
+            "required": False,
+            "description": "Timezone of the Zabbix server (IANA name). Zabbix renders {DATE} {TIME} in the webhook payload in the server's local time without an offset, so Keep needs it to compute the correct UTC timestamp.",
+            "hint": "e.g. Europe/London, Asia/Jerusalem. Defaults to UTC",
+            "sensitive": False,
+        },
+        default="UTC",
+    )
 
 
 class ZabbixProvider(BaseProvider):
     """
     Pull/Push alerts from Zabbix into Keep.
     """
+
+    webhook_description = """Keep installs itself into Zabbix automatically when the webhook is installed:
+    it creates a global webhook script (keep-<provider id>) and a trigger action (keep-<provider id>) with
+    problem, recovery and update operations that POST events to {keep_webhook_api_url}.
+    Nothing needs to be configured manually in Zabbix; add conditions to the action to limit which hosts are sent."""
+    webhook_template = ""
 
     PROVIDER_CATEGORY = ["Monitoring"]
     FINGERPRINT_FIELDS = ["id"]
@@ -717,6 +733,24 @@ class ZabbixProvider(BaseProvider):
         self.logger.info("Finished installing webhook")
 
     @staticmethod
+    def _get_timezone(provider_instance: "BaseProvider" = None) -> datetime.tzinfo:
+        """
+        Timezone used to interpret naive {DATE} {TIME} values sent by Zabbix.
+        Falls back to UTC when the provider instance or the setting is unavailable.
+        """
+        tz_name = "UTC"
+        authentication_config = getattr(provider_instance, "authentication_config", None)
+        if authentication_config is not None:
+            tz_name = getattr(authentication_config, "timezone", None) or "UTC"
+        try:
+            return zoneinfo.ZoneInfo(tz_name)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+            logging.getLogger(__name__).warning(
+                "Unknown Zabbix timezone %s, falling back to UTC", tz_name
+            )
+            return datetime.timezone.utc
+
+    @staticmethod
     def _format_alert(
         event: dict, provider_instance: "BaseProvider" = None
     ) -> AlertDto:
@@ -761,9 +795,14 @@ class ZabbixProvider(BaseProvider):
             # This means it's a test message, just override.
             last_received = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
         else:
-            last_received = datetime.datetime.strptime(
-                last_received, "%Y.%m.%d %H:%M:%S"
-            ).isoformat()
+            # {DATE} {TIME} is rendered by the Zabbix server in its local timezone
+            # without an offset; interpret it in the configured timezone so the
+            # resulting timestamp is correct in UTC.
+            last_received = (
+                datetime.datetime.strptime(last_received, "%Y.%m.%d %H:%M:%S")
+                .replace(tzinfo=ZabbixProvider._get_timezone(provider_instance))
+                .isoformat()
+            )
 
         update_action = event.get("update_action", "")
         if update_action == "acknowledged":

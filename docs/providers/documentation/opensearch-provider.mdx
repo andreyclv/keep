@@ -1,0 +1,106 @@
+---
+title: "OpenSearch"
+sidebarTitle: "OpenSearch Provider"
+description: "Enrich alerts with what OpenSearch logs say about a host, a domain or a URL."
+---
+
+## Overview
+
+The OpenSearch provider is an **enrichment** provider: it does not ingest alerts. It holds *search profiles* that
+describe, per log family, which index patterns to search, how to match an entity despite differing field
+names, what counts as an error, and which fields to return. A workflow step asks for an entity and receives
+the same normalized summary whatever indices answered.
+
+Entity types: `hostname`, `domain`, `url` (a full URL contributes a domain and a path filter, a bare path only a path).
+
+## Authentication
+
+| Field | Required | Description |
+|---|---|---|
+| `host` | yes | Endpoint, e.g. `https://vpc-xxx.us-east-1.es.amazonaws.com` |
+| `username` / `password` | no | Security plugin / fine-grained access control internal user (basic auth) |
+| `verify` | no | TLS verification (default true) |
+| `dashboards_url` | no | Dashboards base URL for Discover links, e.g. `https://logs.example.com/_dashboards` |
+| `search_profiles` | no | YAML or JSON, schema below |
+
+The user needs `cluster_monitor` and `cluster_composite_ops_ro` (for `_msearch`) at cluster level, and the `read`
+action group on the index patterns in the profiles (search, msearch and field_caps).
+
+## Search profiles
+
+```yaml
+search_profiles:
+  defaults: {time_field: "@timestamp", lookback: 15m, size: 10}
+  families:
+    - name: app-logs
+      patterns: [inf-app-*, il2-app-*]
+      time_field: timestamp                      # optional, overrides defaults
+      match_fields:                              # which entity types this family answers, and how
+        hostname: ["object.keyword:*/mnt/log_mounts/{value}/*"]   # "field:pattern{value}" = wildcard
+      error: {field: severity.keyword, values: [Error, Fatal]}
+      warning: {field: severity.keyword, values: [Warning]}
+      message_field: logMessage
+      extra_fields: [method, threadId]
+    - name: iis
+      patterns: [il2-iis-*, pcs-iis-*]
+      match_fields:
+        hostname: [sComputerName.keyword]        # "field" = case-insensitive exact match
+        domain: [csHost.keyword]
+        url: [{domain: csHost.keyword, path: csUri.keyword}]
+      error: {field: csStatus.keyword, min: 500} # range; strings compared as strings on .keyword fields
+      warning: {field: csStatus.keyword, min: 400, max: 499}
+      message_field: csUri
+      extra_fields: [csStatus, timeTaken, csHost]
+    - name: pipeline-dropped
+      patterns: [vector-dropped-*]
+      match_fields: {hostname: ["object.keyword:*/mnt/log_mounts/{value}/*"]}
+      error: {field: metadata.dropped.reason.keyword, values_not: []}   # every document is an error
+      message_field: metadata.dropped.reason
+```
+
+Hostnames are matched on the short name (domain suffix stripped) and case-insensitively. Families without a
+`match_fields` entry for the requested entity type are skipped. Scope validation resolves every pattern and
+checks that every configured field exists in the mappings.
+
+## Workflow usage
+
+```yaml
+steps:
+  - name: logs
+    provider:
+      type: opensearch
+      config: "{{ providers.opensearch-logs }}"
+      with:
+        entity_type: hostname            # hostname | domain | url
+        value: "{{ alert.host_name }}"
+        lookback: 15m                    # optional
+        size: 10                         # optional, number of sample documents
+        families: [app-logs, iis]        # optional subset
+actions:
+  - name: attach
+    provider:
+      type: mock
+      with:
+        enrich_alert:
+          - {key: os_errors_15m, value: "{{ steps.logs.results.total_errors }}", disposable: true}
+          - {key: os_top_error, value: "{{ steps.logs.results.top_error }}", disposable: true}
+          - {key: os_link, value: "{{ steps.logs.results.dashboards_url }}"}
+```
+
+Result shape:
+
+```json
+{
+  "entity_type": "hostname", "value": "INFAPPAWS03", "lookback": "15m",
+  "total_docs": 33203, "total_errors": 108, "total_warnings": 5885,
+  "by_family": [{"family": "app-logs", "patterns": ["inf-app-*"], "docs": 32003, "errors": 101, "warnings": 5845, "indices": ["inf-app-2026-09-22"]}],
+  "by_index": [{"index": "inf-app-2026-09-22", "family": "app-logs", "docs": 32003}],
+  "top_messages": [{"message": "Timeout calling X", "count": 90, "family": "app-logs"}],
+  "top_error": "Timeout calling X",
+  "samples": [{"timestamp": "...", "index": "...", "family": "app-logs", "message": "...", "is_error": true, "extra": {"method": "Cmd_A"}}],
+  "families_searched": ["app-logs", "iis"],
+  "dashboards_url": "https://logs.example.com/_dashboards/app/data-explorer/discover#?..."
+}
+```
+
+A raw search is also available: `with: {index: "inf-app-*", body: {...}}` returns the OpenSearch response unchanged.
